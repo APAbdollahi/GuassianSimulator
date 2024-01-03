@@ -27,7 +27,7 @@ This program is a C++ application designed to simulate financial trading strateg
 Navigate to the directory containing the source code and compile using a C++ compiler. For example, using g++:
 
 ```bash
-g++ -o finance_simulator main.cpp -std=c++17
+g++ -o Gaussian.cpp -std=c++17
 ```
 
 ## Usage
@@ -35,7 +35,7 @@ g++ -o finance_simulator main.cpp -std=c++17
 Run the compiled program from the command line:
 
 ```bash
-./finance_simulator
+./Gaussian
 ```
 
 The program will simulate price series, calculate PnL for each series, and write the results to `output.csv`. You can view the average PnL in the console output.
