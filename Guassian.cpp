@@ -100,5 +100,5 @@ int main() {
 
 std::cout << "average pnl is: "<< average(pnl_series)<<std::endl;
 myfile.close();
-  return pn;
+  return 0;
 }
