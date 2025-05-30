@@ -3,102 +3,196 @@
 #include <vector>
 #include <numeric>
 #include <fstream>
+#include <stdexcept>
+#include <iomanip>
 
-// funtion to calculate average of a vector
-double average(std::vector<double> const& v){
-    if(v.empty()){
-        return 0;
-    }
-
-    auto const count = static_cast<float>(v.size());
-    return std::reduce(v.begin(), v.end()) / count;
-}
-
-//Sample signal generator returning +1 or -1 based on Moving Average Cross-over strategy as an example
-int MA_Cross(std::vector<double> const& Series, int const& short_window,int const& long_window, int const& start){
-
-//a short and a long time window 
-double MA_short=10;
-double MA_long=50;
-
-for (int i=0; i<= short_window; ++i){
-  MA_short += Series[(start-i)];
-  //std::cout << Series[start-i]<<std::endl;
-}
-MA_short /= short_window;
-
-
-
-for (int j=0; j<= long_window; ++j){
-  MA_long += Series[(start-j)];
-}
-MA_long /= long_window;
-
-if (MA_short> MA_long){return 1;}
-else if (MA_short< MA_long){return -1;}
-else {return 0;}
-}
-
-//PnL calculator fdr the MACross strategy
-double MACross_Strat_PnL(std::vector<double> const& price, int const& short_window,int const& long_window, int step){
-std::vector<double> price_hist;
-std::vector<int> sig_hist;
-double pnl=0;
-int sig=0;
-
-for (int j=long_window+1;j< price.size(); j += step){
-    int generated_sig=MA_Cross(price, short_window, long_window,j);
-     if (sig!=generated_sig){
-       price_hist.push_back(price[j]);
-       sig_hist.push_back(generated_sig);
-       sig=generated_sig;
-       }
-  };
+class TradingStrategy {
+private:
+    // Random number generator for price simulation
+    mutable std::mt19937 generator_;
     
-for (int k=1; k< price_hist.size(); ++k){
-  if(sig_hist[k]==-1 && sig_hist[k-1]==1){
-    pnl += price_hist[k]-price_hist[k-1];
-  } else { pnl += price_hist[k-1]-price_hist[k];};};
-  return pnl;
-}
-
-//Generting simulated prices based on Geometric Brownian Motion with no drift  
-std::vector<double> Generate_Simulated_Price(double mu, double sigma, double S, int size){
-  std::vector<double> Series;
-  std::random_device rd {};
-  std::mt19937 gen {rd()};
-  std::normal_distribution<> d{mu, sigma};
-
-
-  for (int i=0; i<size; ++i){
-       S=S*(1+d(gen));
-       Series.push_back(S);
-      //std::cout << S << std::endl;
-
-  };
-return Series;
-
-}
-
+public:
+    TradingStrategy() : generator_(std::random_device{}()) {}
+    
+    // Calculate simple moving average for a given window
+    double calculateMovingAverage(const std::vector<double>& series, 
+                                 int endIndex, 
+                                 int windowSize) const {
+        if (endIndex < windowSize - 1 || endIndex >= static_cast<int>(series.size())) {
+            throw std::out_of_range("Invalid index or insufficient data for moving average");
+        }
+        
+        double sum = 0.0;
+        for (int i = 0; i < windowSize; ++i) {
+            sum += series[endIndex - i];
+        }
+        return sum / windowSize;
+    }
+    
+    // Generate trading signal based on moving average crossover
+    // Returns: 1 for buy, -1 for sell, 0 for no signal
+    int generateMACrossSignal(const std::vector<double>& prices, 
+                             int shortWindow, 
+                             int longWindow, 
+                             int currentIndex) const {
+        if (currentIndex < longWindow - 1) {
+            return 0; // Not enough data
+        }
+        
+        double shortMA = calculateMovingAverage(prices, currentIndex, shortWindow);
+        double longMA = calculateMovingAverage(prices, currentIndex, longWindow);
+        
+        if (shortMA > longMA) {
+            return 1;  // Buy signal
+        } else if (shortMA < longMA) {
+            return -1; // Sell signal
+        }
+        return 0; // No clear signal
+    }
+    
+    // Calculate P&L for the moving average crossover strategy
+    double calculateStrategyPnL(const std::vector<double>& prices, 
+                               int shortWindow, 
+                               int longWindow, 
+                               int step = 1) const {
+        if (prices.size() < static_cast<size_t>(longWindow)) {
+            return 0.0; // Not enough data
+        }
+        
+        std::vector<double> entryPrices;
+        std::vector<int> signals;
+        double totalPnL = 0.0;
+        int currentSignal = 0;
+        
+        // Generate signals and track entry points
+        for (int i = longWindow; i < static_cast<int>(prices.size()); i += step) {
+            int newSignal = generateMACrossSignal(prices, shortWindow, longWindow, i);
+            
+            // Only act on signal changes
+            if (newSignal != currentSignal && newSignal != 0) {
+                entryPrices.push_back(prices[i]);
+                signals.push_back(newSignal);
+                currentSignal = newSignal;
+            }
+        }
+        
+        // Calculate P&L from trades
+        for (size_t i = 1; i < entryPrices.size(); ++i) {
+            double priceDiff = entryPrices[i] - entryPrices[i-1];
+            
+            // If previous signal was buy (1), we profit from price increase
+            // If previous signal was sell (-1), we profit from price decrease
+            if (signals[i-1] == 1) {
+                totalPnL += priceDiff;  // Long position profits from price increase
+            } else if (signals[i-1] == -1) {
+                totalPnL -= priceDiff;  // Short position profits from price decrease
+            }
+        }
+        
+        return totalPnL;
+    }
+    
+    // Generate simulated price series using Geometric Brownian Motion
+    std::vector<double> generateSimulatedPrices(double drift, 
+                                               double volatility, 
+                                               double initialPrice, 
+                                               int numSteps) const {
+        std::vector<double> prices;
+        prices.reserve(numSteps);
+        
+        std::normal_distribution<double> distribution(drift, volatility);
+        double currentPrice = initialPrice;
+        
+        for (int i = 0; i < numSteps; ++i) {
+            currentPrice *= (1.0 + distribution(generator_));
+            prices.push_back(currentPrice);
+        }
+        
+        return prices;
+    }
+    
+    // Calculate average of a vector
+    double calculateAverage(const std::vector<double>& values) const {
+        if (values.empty()) {
+            return 0.0;
+        }
+        
+        double sum = std::accumulate(values.begin(), values.end(), 0.0);
+        return sum / static_cast<double>(values.size());
+    }
+    
+    // Run Monte Carlo simulation of the trading strategy
+    void runSimulation(int numSimulations = 1000, 
+                      int priceSeriesLength = 10000,
+                      int shortWindow = 50, 
+                      int longWindow = 150,
+                      const std::string& outputFile = "trading_results.csv") const {
+        
+        std::vector<double> pnlResults;
+        pnlResults.reserve(numSimulations);
+        
+        std::ofstream file(outputFile);
+        if (!file.is_open()) {
+            throw std::runtime_error("Cannot open output file: " + outputFile);
+        }
+        
+        file << "simulation,pnl" << std::endl;
+        
+        std::cout << "Running " << numSimulations << " simulations..." << std::endl;
+        std::cout << "Short MA: " << shortWindow << ", Long MA: " << longWindow << std::endl;
+        std::cout << std::string(50, '-') << std::endl;
+        
+        for (int i = 0; i < numSimulations; ++i) {
+            // Generate price series (no drift, 1% volatility, starting at $100)
+            auto prices = generateSimulatedPrices(0.0, 0.01, 100.0, priceSeriesLength);
+            
+            // Calculate P&L for this simulation
+            double pnl = calculateStrategyPnL(prices, shortWindow, longWindow, 5);
+            pnlResults.push_back(pnl);
+            
+            // Write to file
+            file << i + 1 << "," << std::fixed << std::setprecision(4) << pnl << std::endl;
+            
+            // Progress update
+            if ((i + 1) % 100 == 0) {
+                std::cout << "Completed " << i + 1 << " simulations" << std::endl;
+            }
+        }
+        
+        file.close();
+        
+        // Calculate and display statistics
+        double avgPnL = calculateAverage(pnlResults);
+        double minPnL = *std::min_element(pnlResults.begin(), pnlResults.end());
+        double maxPnL = *std::max_element(pnlResults.begin(), pnlResults.end());
+        
+        // Count profitable simulations
+        int profitableCount = std::count_if(pnlResults.begin(), pnlResults.end(), 
+                                          [](double pnl) { return pnl > 0; });
+        
+        std::cout << std::string(50, '-') << std::endl;
+        std::cout << "Simulation Results:" << std::endl;
+        std::cout << "Average P&L: $" << std::fixed << std::setprecision(2) << avgPnL << std::endl;
+        std::cout << "Min P&L: $" << minPnL << std::endl;
+        std::cout << "Max P&L: $" << maxPnL << std::endl;
+        std::cout << "Profitable simulations: " << profitableCount << "/" << numSimulations 
+                  << " (" << std::fixed << std::setprecision(1) 
+                  << (100.0 * profitableCount / numSimulations) << "%)" << std::endl;
+        std::cout << "Results saved to: " << outputFile << std::endl;
+    }
+};
 
 int main() {
-  // initialize Gaussian random number generator
-  std::vector<double> Simulated_price;
-  std::vector<double> pnl_series;
-  double pnl;
-  std::ofstream myfile;
-  myfile.open("output.csv");
-  myfile << "pnl" << std::endl;
-  for (int i=1; i< 10000; ++i){
-    Simulated_price=Generate_Simulated_Price(0,0.01,100,100000);
-    pnl=MACross_Strat_PnL(Simulated_price,50,150,5);
-    pnl_series.push_back(pnl);
-    std::cout << "pnl is" << pnl << std::endl;
-    myfile << pnl << std::endl;
-
-  }
-
-std::cout << "average pnl is: "<< average(pnl_series)<<std::endl;
-myfile.close();
-  return 0;
+    try {
+        TradingStrategy strategy;
+        
+        // Run simulation with default parameters
+        strategy.runSimulation(1000, 10000, 50, 150, "ma_crossover_results.csv");
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+    
+    return 0;
 }
